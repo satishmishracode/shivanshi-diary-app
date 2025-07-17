@@ -2,3 +2,4 @@ streamlit
 pillow
 fpdf
 google.generativeai
+openai
