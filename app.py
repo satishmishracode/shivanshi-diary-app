@@ -47,10 +47,15 @@ c.execute('''
     CREATE TABLE IF NOT EXISTS diary_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_date TEXT,
-        entry_text TEXT,
-        mood_emoji TEXT
+        entry_text TEXT
     )
 ''')
+# --- Ensure mood_emoji column exists ---
+try:
+    c.execute('ALTER TABLE diary_entries ADD COLUMN mood_emoji TEXT')
+except sqlite3.OperationalError:
+    pass  # Column exists, that's fine.
+
 c.execute('''
     CREATE TABLE IF NOT EXISTS diary_images (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
