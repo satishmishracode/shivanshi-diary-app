@@ -9,6 +9,7 @@ import os
 import random
 import pickle
 import openai
+import requests
 
 # --- OPENAI API KEY SETUP ---
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
@@ -16,22 +17,41 @@ if not OPENAI_API_KEY:
     st.error("OpenAI API key not set! Please set OPENAI_API_KEY in Streamlit Secrets.")
 openai.api_key = OPENAI_API_KEY
 
-def openai_generate_stickers(prompt, num_images=5):
+# --- Generate 1 sticker sheet image with 10 sticker ideas ---
+def openai_generate_sticker_sheet(prompt_ideas):
+    sticker_prompt = (
+        f"A 1024x1024 white background sticker sheet with 10 cute cartoon stickers: "
+        f"{prompt_ideas}. Each sticker should be separated with lots of whitespace, "
+        f"arranged in a 2x5 grid for easy cropping, no text, no shadows, no overlap."
+    )
+    response = openai.images.generate(
+        model="dall-e-3",
+        prompt=sticker_prompt,
+        size="1024x1024",
+        quality="standard",
+        n=1,
+    )
+    img_url = response.data[0].url
+    return img_url
+
+# --- Split the 1024x1024 image into 10 stickers (2 rows x 5 columns) ---
+def split_sticker_sheet(img_url):
+    response = requests.get(img_url)
+    img = Image.open(io.BytesIO(response.content)).convert("RGBA")
+    w, h = img.size
+    grid_rows = 2
+    grid_cols = 5
     stickers = []
-    for _ in range(num_images):
-        try:
-            response = openai.images.generate(
-                model="dall-e-3",
-                prompt=f"cute cartoon sticker, transparent background, {prompt}, no text",
-                size="256x256",
-                quality="standard",
-                n=1,
-            )
-            img_url = response.data[0].url
-            stickers.append(img_url)
-        except Exception as e:
-            st.warning(f"OpenAI sticker generation failed: {e}")
-            break
+    sw = w // grid_cols
+    sh = h // grid_rows
+    for row in range(grid_rows):
+        for col in range(grid_cols):
+            left = col * sw
+            upper = row * sh
+            right = left + sw
+            lower = upper + sh
+            crop = img.crop((left, upper, right, lower))
+            stickers.append(crop)
     return stickers
 
 # --- PINK THEME ---
@@ -142,16 +162,10 @@ def export_pdf(entry_date, entry_text, mood_emoji, images, stickers):
     pdf.ln(5)
     # Stickers (show as images in PDF)
     for sidx, sticker in enumerate(stickers):
-        try:
-            from urllib.request import urlopen
-            imgdata = urlopen(sticker).read()
-            temp_path = f"temp_sticker{sidx}.png"
-            with open(temp_path, "wb") as f:
-                f.write(imgdata)
-            pdf.image(temp_path, w=30)
-            os.remove(temp_path)
-        except:
-            continue
+        temp_path = f"temp_sticker{sidx}.png"
+        sticker.save(temp_path)
+        pdf.image(temp_path, w=30)
+        os.remove(temp_path)
     if stickers:
         pdf.ln(10)
     for img in images:
@@ -197,24 +211,30 @@ with tab1:
     
     st.markdown("---")
     st.subheader("Decorate your diary with stickers!")
-    sticker_prompt = st.text_input("What kind of stickers would you like? (e.g., unicorns, stars, pizza, etc.)")
+    sticker_ideas = st.text_input(
+        "Enter 10 sticker ideas (comma-separated, e.g., unicorn, rainbow, pizza, cat, heart, cupcake, sun, cloud, flower, star):"
+    )
     sticker_images = []
     selected_stickers = []
     if 'sticker_cache' not in st.session_state:
         st.session_state.sticker_cache = {}
-    if st.button("Generate Stickers"):
-        if not sticker_prompt.strip():
-            st.warning("Please enter a sticker idea!")
+    if st.button("Generate Sticker Sheet"):
+        if not sticker_ideas.strip():
+            st.warning("Please enter your 10 sticker ideas!")
         else:
-            sticker_images = openai_generate_stickers(sticker_prompt)
-            st.session_state.sticker_cache[entry_date] = sticker_images
+            try:
+                img_url = openai_generate_sticker_sheet(sticker_ideas)
+                stickers = split_sticker_sheet(img_url)
+                st.session_state.sticker_cache[entry_date] = stickers
+            except Exception as e:
+                st.warning(f"Sticker generation failed: {e}")
     # Show sticker grid if available
     if entry_date in st.session_state.sticker_cache:
-        sticker_images = st.session_state.sticker_cache[entry_date]
+        stickers = st.session_state.sticker_cache[entry_date]
         st.write("Choose up to 5 stickers:")
         cols = st.columns(5)
         picked = []
-        for idx, img in enumerate(sticker_images):
+        for idx, img in enumerate(stickers):
             with cols[idx % 5]:
                 st.image(img, width=80)
                 chk = st.checkbox(f"Pick", key=f"sticker_{idx}")
